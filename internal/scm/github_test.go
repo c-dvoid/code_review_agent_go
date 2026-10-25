@@ -109,6 +109,7 @@ func TestPostReviewComment(t *testing.T) {
 	tests := []struct {
 		name        string
 		api         fakeCommentAPI
+		fallback    string
 		wantErr     error
 		wantCreated bool
 		wantPatchID string
@@ -138,11 +139,17 @@ func TestPostReviewComment(t *testing.T) {
 			api:         fakeCommentAPI{head: "new", userErr: true, comments: `[{"id":10,"body":"` + marked + `","user":{"login":"bot"}}]`},
 			wantCreated: true,
 		},
+		{
+			name:        "Actions token edits the bot comment via the fallback login",
+			api:         fakeCommentAPI{head: "new", userErr: true, comments: `[{"id":10,"body":"` + marked + `","user":{"login":"bot"}}]`},
+			fallback:    "bot",
+			wantPatchID: "10",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := tt.api
-			gh := NewGitHub(GitHubConfig{BaseURL: api.server(t).URL, Token: "t"})
+			gh := NewGitHub(GitHubConfig{BaseURL: api.server(t).URL, Token: "t", FallbackLogin: tt.fallback})
 
 			err := gh.PostReviewComment(context.Background(), pr, "review body")
 			if !errors.Is(err, tt.wantErr) {

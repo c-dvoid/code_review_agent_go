@@ -38,27 +38,3 @@ type ErrorBody struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
-
-// githubPullRequestEvent is the subset of GitHub's pull_request webhook
-// payload this service needs.
-// See https://docs.github.com/webhooks/webhook-events-and-payloads#pull_request
-type githubPullRequestEvent struct {
-	Action      string `json:"action"`
-	Number      int    `json:"number"`
-	PullRequest struct {
-		Number  int    `json:"number"`
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		Draft   bool   `json:"draft"`
-		HTMLURL string `json:"html_url"`
-		Head    struct {
-			SHA string `json:"sha"`
-		} `json:"head"`
-	} `json:"pull_request"`
-	Repository struct {
-		Name  string `json:"name"`
-		Owner struct {
-			Login string `json:"login"`
-		} `json:"owner"`
-	} `json:"repository"`
-}

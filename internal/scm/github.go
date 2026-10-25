@@ -26,6 +26,10 @@ type GitHubConfig struct {
 	Token        string
 	MaxDiffBytes int
 	HTTPClient   *http.Client
+	// FallbackLogin is the comment author to match when the token's user
+	// cannot be looked up, e.g. "github-actions[bot]" for the GITHUB_TOKEN of a
+	// GitHub Actions run. Empty means a new comment is posted in that case.
+	FallbackLogin string
 }
 
 // GitHub implements domain.SourceControlProvider using the GitHub REST API.
@@ -34,6 +38,7 @@ type GitHub struct {
 	token        string
 	maxDiffBytes int
 	http         *http.Client
+	fallbackUser string
 
 	mu    sync.Mutex
 	login string // token's user, see selfLogin
@@ -53,6 +58,7 @@ func NewGitHub(cfg GitHubConfig) *GitHub {
 		token:        cfg.Token,
 		maxDiffBytes: cfg.MaxDiffBytes,
 		http:         hc,
+		fallbackUser: cfg.FallbackLogin,
 	}
 }
 
@@ -225,8 +231,8 @@ func (g *GitHub) checkHead(ctx context.Context, pr domain.PullRequestRef) error 
 // findReviewComment returns the ID of this service's latest review comment on
 // the PR, or 0 if there is none. Only comments written by the token's own user
 // count, so a comment that merely copies the marker is never edited. If the
-// token's user cannot be determined (e.g. a GitHub App token), it returns 0
-// and a new comment is created.
+// token's user cannot be determined (e.g. a GitHub App or Actions token) and no
+// fallback login is configured, it returns 0 and a new comment is created.
 func (g *GitHub) findReviewComment(ctx context.Context, pr domain.PullRequestRef) (int64, error) {
 	self, err := g.selfLogin(ctx)
 	if err != nil {
@@ -286,11 +292,16 @@ func (g *GitHub) selfLogin(ctx context.Context) (string, error) {
 	var user struct {
 		Login string `json:"login"`
 	}
-	if err := g.doJSON(req, &user); err != nil {
-		return "", err
+	err = g.doJSON(req, &user)
+	if err == nil && user.Login == "" {
+		err = fmt.Errorf("%w: github: empty login for token", domain.ErrProviderFailure)
 	}
-	if user.Login == "" {
-		return "", fmt.Errorf("%w: github: empty login for token", domain.ErrProviderFailure)
+	if err != nil {
+		// Installation tokens get 403 from /user; use the configured identity.
+		if g.fallbackUser == "" || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", err
+		}
+		user.Login = g.fallbackUser
 	}
 	g.login = user.Login
 	return g.login, nil

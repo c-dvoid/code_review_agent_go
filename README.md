@@ -1,6 +1,6 @@
 # Code Review Agent (Go)
 
-An HTTP microservice that reviews code with an LLM. You can send it code on demand through a REST endpoint, or point a GitHub webhook at it so it reviews pull requests automatically and posts the result as a PR comment.
+Reviews code with an LLM. The easiest way to use it is as a **GitHub Action**: add one workflow file to a repository and every pull request gets a review comment, updated on each push (see below). It also runs as an HTTP microservice: send it code through a REST endpoint, or point a GitHub webhook at it.
 
 - **Router:** `go-chi/chi/v5` with the `RequestID`, `RequestLogger` (slog JSON), `Recoverer` and `Timeout` middlewares
 - **Logging:** `log/slog` JSON to stdout
@@ -12,13 +12,78 @@ An HTTP microservice that reviews code with an LLM. You can send it code on dema
 
 ```
 cmd/server/main.go          wiring, HTTP server, signal handling, graceful shutdown
+cmd/action/main.go          GitHub Action entry point: one PR review per workflow run
+action.yml                  GitHub Action definition (built from Dockerfile.action)
 internal/config/            env-based configuration + validation
 internal/domain/            models, sentinel errors, interfaces (LLMProvider, SourceControlProvider, ReviewService)
 internal/service/           review orchestration, prompt, JSON parsing, PR comment formatting, background dispatcher
 internal/provider/          LLMProvider implementations: anthropic.go, openai.go (OpenAI/Ollama), mock.go, factory.go
-internal/scm/               SourceControlProvider implementation for GitHub (diff fetch + PR comments)
+internal/scm/               SourceControlProvider implementation for GitHub (diff fetch + PR comments), pull_request event parsing
 internal/handler/           chi router, handlers, DTOs, middleware
 ```
+
+## Use it as a GitHub Action
+
+Nothing to host: the review runs in GitHub Actions on every pull request, and the comment is posted by `github-actions[bot]`.
+
+1. Add your LLM API key as a repository secret: repo → Settings → Secrets and variables → Actions → New repository secret.
+2. Add `.github/workflows/code-review.yml`:
+
+```yaml
+name: Code review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read        # read the diff and changed files
+  pull-requests: write  # post and update the review comment
+
+concurrency:            # a new push cancels the review of the previous one
+  group: code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: c-dvoid/code_review_agent_go@v1
+        with:
+          api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+For OpenRouter (or any other OpenAI-compatible API), set the provider, URL and model:
+
+```yaml
+      - uses: c-dvoid/code_review_agent_go@v1
+        with:
+          provider: openai
+          base_url: https://openrouter.ai/api/v1
+          model: openai/gpt-6-luna
+          api_key: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `api_key` | – | LLM API key (use a secret) |
+| `provider` | `anthropic` | `anthropic`, `openai` (any OpenAI-compatible API) or `ollama` |
+| `model` | `claude-opus-5-5` for anthropic | Model ID; required for `openai` |
+| `base_url` | provider default | API base URL, e.g. `https://openrouter.ai/api/v1` |
+| `effort` | `high` | Anthropic only: `low` … `max` |
+| `post_comment` | `true` | `false` writes the review to the job summary only |
+| `context_files` | `true` | Send the full changed files, not just the diff |
+| `max_input_bytes` | `400000` | Larger diffs are not reviewed |
+| `fail_on` | `none` | Fail the job (e.g. to block merging) on an issue at or above `critical`, `major`, `minor` or `info` |
+| `github_token` | `${{ github.token }}` | Token for reading the PR and posting the comment |
+
+Outputs: `verdict`, `issues` and `review_id`. Every run also writes the review to the job summary.
+
+Notes:
+- **Pull requests from forks** don't receive repository secrets, so the job is skipped with a notice. This is GitHub's security default; don't work around it with `pull_request_target` unless you understand the risks.
+- **Drafts** are skipped until they are marked ready for review.
+- **Cost:** each repository pays for its own LLM usage with its own key.
+- The action never reads a `.env` file, even if the workspace has one, so a pull request can't redirect the API key to another server.
 
 ## Core interfaces (`internal/domain/interfaces.go`)
 

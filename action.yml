@@ -1,0 +1,55 @@
+name: AI Code Review Agent
+description: Reviews every pull request with an LLM and posts the findings as a PR comment that is updated on each push.
+author: c-dvoid
+branding:
+  icon: eye
+  color: blue
+
+inputs:
+  api_key:
+    description: API key for the LLM provider. Store it as a repository secret.
+    required: false
+  provider:
+    description: LLM provider, one of anthropic, openai (any OpenAI-compatible API, e.g. OpenRouter) or ollama.
+    required: false
+    default: anthropic
+  model:
+    description: Model ID. Defaults to claude-opus-5-5 for anthropic; required for openai and ollama.
+    required: false
+  base_url:
+    description: API base URL override, e.g. https://openrouter.ai/api/v1 for OpenRouter.
+    required: false
+  effort:
+    description: Anthropic only. One of low, medium, high, xhigh, max.
+    required: false
+  github_token:
+    description: Token used to read the pull request and post the comment.
+    required: false
+    default: ${{ github.token }}
+  post_comment:
+    description: Post the review as a PR comment. When false, the review only appears in the job summary.
+    required: false
+    default: "true"
+  context_files:
+    description: Also send the full new version of each changed file so the model sees the code around each change.
+    required: false
+    default: "true"
+  max_input_bytes:
+    description: Pull requests whose diff is larger than this are not reviewed.
+    required: false
+  fail_on:
+    description: Fail the job when an issue at or above this severity is found. One of none, critical, major, minor, info.
+    required: false
+    default: none
+
+outputs:
+  verdict:
+    description: approve, comment or request_changes.
+  issues:
+    description: Number of issues found.
+  review_id:
+    description: ID of the review, also shown in the comment footer.
+
+runs:
+  using: docker
+  image: Dockerfile.action

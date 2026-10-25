@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/c-dvoid/code-review-agent-go/internal/domain"
+	"github.com/c-dvoid/code-review-agent-go/internal/scm"
 )
 
 // JobRunner executes work in the background, detached from the request.
@@ -53,14 +53,6 @@ func NewWebhookHandler(svc domain.ReviewService, jobs JobRunner, opts WebhookOpt
 	}
 }
 
-// reviewableActions are pull_request actions that introduce new code.
-var reviewableActions = map[string]bool{
-	"opened":           true,
-	"synchronize":      true,
-	"reopened":         true,
-	"ready_for_review": true,
-}
-
 // GitHub handles POST /api/v1/webhook/github.
 func (h *WebhookHandler) GitHub(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.maxBodyBytes))
@@ -89,34 +81,17 @@ func (h *WebhookHandler) GitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var evt githubPullRequestEvent
-	if err := json.Unmarshal(body, &evt); err != nil {
+	evt, err := scm.ParsePullRequestEvent(body)
+	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_json", "invalid pull_request payload: "+err.Error())
 		return
 	}
-	if !reviewableActions[evt.Action] {
-		writeJSON(w, http.StatusOK, WebhookAck{Status: "ignored", Reason: fmt.Sprintf("action %q does not require review", evt.Action), DeliveryID: deliveryID})
+	if reason := evt.SkipReason(); reason != "" {
+		writeJSON(w, http.StatusOK, WebhookAck{Status: "ignored", Reason: reason, DeliveryID: deliveryID})
 		return
 	}
-	if evt.PullRequest.Draft {
-		writeJSON(w, http.StatusOK, WebhookAck{Status: "ignored", Reason: "draft pull request", DeliveryID: deliveryID})
-		return
-	}
-
-	number := evt.PullRequest.Number
-	if number == 0 {
-		number = evt.Number
-	}
-	pr := domain.PullRequestRef{
-		Owner:   evt.Repository.Owner.Login,
-		Repo:    evt.Repository.Name,
-		Number:  number,
-		Title:   evt.PullRequest.Title,
-		Body:    evt.PullRequest.Body,
-		HeadSHA: evt.PullRequest.Head.SHA,
-		HTMLURL: evt.PullRequest.HTMLURL,
-	}
-	if pr.Owner == "" || pr.Repo == "" || pr.Number <= 0 {
+	pr, err := evt.Ref()
+	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_input", "payload is missing repository owner, name or pull request number")
 		return
 	}

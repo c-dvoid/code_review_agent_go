@@ -100,7 +100,12 @@ func Load() (*Config, error) {
 	if err := godotenv.Load(); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("load .env file: %w", err)
 	}
+	return LoadEnv()
+}
 
+// LoadEnv is Load without the .env file. Use it where the working directory
+// may hold untrusted files, such as a CI checkout of a pull request.
+func LoadEnv() (*Config, error) {
 	var cfg Config
 	if err := env.Parse(&cfg); err != nil {
 		return nil, fmt.Errorf("parse environment: %w", err)
