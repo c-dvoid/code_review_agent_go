@@ -11,7 +11,7 @@ import (
 
 type llmReview struct {
 	Summary string         `json:"summary"`
-	Verdict string         `json:"verdict"`
+	Verdict string         `json:"verdict"` // derived by normalize, not read from the model
 	Issues  []domain.Issue `json:"issues"`
 }
 
@@ -39,11 +39,23 @@ func normalize(r *llmReview) {
 	worst := 0
 	for i := range r.Issues {
 		is := &r.Issues[i]
-		is.Severity = domain.Severity(strings.ToLower(strings.TrimSpace(string(is.Severity))))
-		switch is.Severity {
-		case domain.SeverityCritical, domain.SeverityMajor, domain.SeverityMinor, domain.SeverityInfo:
-		default:
-			is.Severity = domain.SeverityInfo
+		is.Impact = strings.ToLower(strings.TrimSpace(is.Impact))
+		is.Likelihood = strings.ToLower(strings.TrimSpace(is.Likelihood))
+		if is.Likelihood != LikelihoodCommon && is.Likelihood != LikelihoodEdgeCase {
+			is.Likelihood = ""
+		}
+		if sev, ok := deriveSeverity(is.Impact, is.Likelihood); ok {
+			is.Severity = sev
+		} else {
+			// No usable classification (e.g. a provider that ignores the
+			// schema): fall back to whatever severity the model gave.
+			is.Impact, is.Likelihood = "", ""
+			is.Severity = domain.Severity(strings.ToLower(strings.TrimSpace(string(is.Severity))))
+			switch is.Severity {
+			case domain.SeverityCritical, domain.SeverityMajor, domain.SeverityMinor, domain.SeverityInfo:
+			default:
+				is.Severity = domain.SeverityInfo
+			}
 		}
 		if is.Line < 0 {
 			is.Line = 0
@@ -54,11 +66,9 @@ func normalize(r *llmReview) {
 		return r.Issues[i].Severity.Rank() > r.Issues[j].Severity.Rank()
 	})
 
-	switch domain.Verdict(r.Verdict) {
-	case domain.VerdictApprove, domain.VerdictComment, domain.VerdictRequestChanges:
-	default:
-		r.Verdict = string(deriveVerdict(len(r.Issues), worst))
-	}
+	// The verdict always follows from the issues, never from the model's own
+	// pick, so a review can't say "approve" next to a critical finding.
+	r.Verdict = string(deriveVerdict(len(r.Issues), worst))
 }
 
 func deriveVerdict(count, worstRank int) domain.Verdict {

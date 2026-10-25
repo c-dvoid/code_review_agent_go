@@ -131,6 +131,8 @@ Response `200`:
     "issues": [
       {
         "severity": "critical",
+        "impact": "security",
+        "likelihood": "common",
         "category": "security",
         "file": "x.go",
         "line": 1,
@@ -149,6 +151,8 @@ Response `200`:
 ```
 
 `verdict` is one of `approve`, `comment` or `request_changes`. `severity` is one of `critical`, `major`, `minor` or `info`, and issues come back sorted most severe first.
+
+Severity is not picked by the model. The model classifies each issue by `impact` (`security`, `data_loss`, `crash`, `incorrect_behavior`, `resource`, `performance`, `maintainability`) and `likelihood` (`common` or `edge_case`), and the service maps that to a severity with a fixed table (`internal/service/severity.go`), so the same problem gets the same severity across runs and models. The verdict is then derived from the issues: `request_changes` if any is critical or major, `comment` if there are only minor or info issues, `approve` if there are none. If a provider returns no usable classification, the model's own `severity` is used instead.
 
 Errors all use the same shape: `{"error":{"code":"invalid_input","message":"…"},"request_id":"…"}`.
 Status codes: `400` invalid input · `401` bad API key or signature · `413` too large · `422` the model declined · `502` upstream or bad model output · `503` provider overloaded or queue full · `504` timeout.

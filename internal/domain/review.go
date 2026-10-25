@@ -90,13 +90,17 @@ type PullRequestRef struct {
 
 // Issue is a single review finding.
 type Issue struct {
-	Severity    Severity `json:"severity"`
-	Category    string   `json:"category"`
-	File        string   `json:"file,omitempty"`
-	Line        int      `json:"line,omitempty"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Suggestion  string   `json:"suggestion,omitempty"`
+	Severity Severity `json:"severity"`
+	// Impact and Likelihood are the model's classification of the issue;
+	// Severity is derived from them so the same problem always ranks the same.
+	Impact      string `json:"impact,omitempty"`
+	Likelihood  string `json:"likelihood,omitempty"`
+	Category    string `json:"category"`
+	File        string `json:"file,omitempty"`
+	Line        int    `json:"line,omitempty"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Suggestion  string `json:"suggestion,omitempty"`
 }
 
 // TokenUsage reports LLM token consumption for a single review.
