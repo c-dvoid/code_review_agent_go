@@ -1,0 +1,11 @@
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/action ./cmd/action
+
+# Runs as root: GitHub mounts the job summary and output files root-owned.
+FROM gcr.io/distroless/static-debian12
+COPY --from=build /out/action /action
+ENTRYPOINT ["/action"]

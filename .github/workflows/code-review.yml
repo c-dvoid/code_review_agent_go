@@ -1,0 +1,27 @@
+# Reviews this repository's own pull requests with the action in this repo.
+# Needs a repository secret OPENROUTER_API_KEY; without it the job is skipped.
+name: Code review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          provider: openai
+          base_url: https://openrouter.ai/api/v1
+          model: openai/gpt-6-luna
+          api_key: ${{ secrets.OPENROUTER_API_KEY }}
