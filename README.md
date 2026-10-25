@@ -1,33 +1,18 @@
 # Code Review Agent (Go)
 
-Reviews code with an LLM. The easiest way to use it is as a **GitHub Action**: add one workflow file to a repository and every pull request gets a review comment, updated on each push (see below). It also runs as an HTTP microservice: send it code through a REST endpoint, or point a GitHub webhook at it.
+AI code review for your pull requests. Add one workflow file to a repository and every pull request gets a review comment that points out bugs, security problems and risky changes, and is updated on each push. Bring your own LLM key (Anthropic, OpenRouter, OpenAI or a local Ollama); nothing to host.
 
-- **Router:** `go-chi/chi/v5` with the `RequestID`, `RequestLogger` (slog JSON), `Recoverer` and `Timeout` middlewares
-- **Logging:** `log/slog` JSON to stdout
-- **Config:** environment variables (`caarlos0/env/v10`)
-- **LLM providers:** Anthropic Claude (official Go SDK), OpenAI, Ollama (any OpenAI-compatible server) and an offline mock
-- **Graceful shutdown:** on SIGINT/SIGTERM the service drains HTTP requests first, then finishes background reviews
+## Quick start: review every pull request (GitHub Action)
 
-## Project layout
+Nothing to install or host. GitHub runs the review on its own machines whenever a pull request is opened or updated, and `github-actions[bot]` posts the result as a comment that is updated on each push. It works in public and private repositories, for any programming language.
 
-```
-cmd/server/main.go          wiring, HTTP server, signal handling, graceful shutdown
-cmd/action/main.go          GitHub Action entry point: one PR review per workflow run
-action.yml                  GitHub Action definition (built from Dockerfile.action)
-internal/config/            env-based configuration + validation
-internal/domain/            models, sentinel errors, interfaces (LLMProvider, SourceControlProvider, ReviewService)
-internal/service/           review orchestration, prompt, JSON parsing, PR comment formatting, background dispatcher
-internal/provider/          LLMProvider implementations: anthropic.go, openai.go (OpenAI/Ollama), mock.go, factory.go
-internal/scm/               SourceControlProvider implementation for GitHub (diff fetch + PR comments), pull_request event parsing
-internal/handler/           chi router, handlers, DTOs, middleware
-```
+**1. Get an API key** from [Anthropic](https://console.anthropic.com/settings/keys), or from [OpenRouter](https://openrouter.ai/keys) to use other models.
 
-## Use it as a GitHub Action
+**2. Save it as a repository secret.** In your repository: Settings → Secrets and variables → Actions → **New repository secret**. Name it `ANTHROPIC_API_KEY` (or `OPENROUTER_API_KEY`). The name must match the one used in the workflow below.
 
-Nothing to host: the review runs in GitHub Actions on every pull request, and the comment is posted by `github-actions[bot]`.
+**3. Add the workflow.** Click Add file → Create new file, name it `.github/workflows/code-review.yml`, paste one of the following and commit it to your default branch.
 
-1. Add your LLM API key as a repository secret: repo → Settings → Secrets and variables → Actions → New repository secret.
-2. Add `.github/workflows/code-review.yml`:
+With Anthropic:
 
 ```yaml
 name: Code review
@@ -53,16 +38,29 @@ jobs:
           api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-For OpenRouter (or any other OpenAI-compatible API), set the provider, URL and model:
+With OpenRouter (or any OpenAI-compatible API), use the same file with this `with:` block instead:
 
 ```yaml
-      - uses: c-dvoid/code_review_agent_go@v1
         with:
           provider: openai
           base_url: https://openrouter.ai/api/v1
           model: openai/gpt-6-luna
           api_key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
+
+**4. Open a pull request.** After one to two minutes (most of it GitHub building the action) a review comment appears on it. The same review is shown on the run's Summary page (Actions tab).
+
+**Troubleshooting**
+
+| You see | Cause and fix |
+|---|---|
+| The job ends with "Skipping: no api_key" | The secret is missing or its name doesn't match the workflow. Pull requests from forks never receive secrets, so they are always skipped. |
+| "Skipping: draft pull request" | Drafts are reviewed once they are marked ready for review. |
+| 403 "Resource not accessible by integration" when posting | Settings → Actions → General → Workflow permissions: choose "Read and write permissions". |
+| 401 or 404 from the LLM | Wrong key, model ID or `base_url`. |
+| No job runs at all | The workflow file must be in `.github/workflows/` on the default branch, and Actions must be enabled (Settings → Actions). |
+
+### Options
 
 | Input | Default | Description |
 |---|---|---|
@@ -80,10 +78,34 @@ For OpenRouter (or any other OpenAI-compatible API), set the provider, URL and m
 Outputs: `verdict`, `issues` and `review_id`. Every run also writes the review to the job summary.
 
 Notes:
-- **Pull requests from forks** don't receive repository secrets, so the job is skipped with a notice. This is GitHub's security default; don't work around it with `pull_request_target` unless you understand the risks.
-- **Drafts** are skipped until they are marked ready for review.
+- **Pull requests from forks** are skipped (GitHub doesn't give them secrets). Don't work around it with `pull_request_target` unless you understand the risks.
 - **Cost:** each repository pays for its own LLM usage with its own key.
+- **Privacy:** the diff and the changed files are sent to the LLM provider you configure, and nowhere else.
 - The action never reads a `.env` file, even if the workspace has one, so a pull request can't redirect the API key to another server.
+
+## Self-hosting and development
+
+The same review service also runs as an HTTP server: on-demand reviews through a REST endpoint, and pull request reviews through a GitHub webhook. You only need this to run it on your own infrastructure or to work on the code; the GitHub Action above needs none of it.
+
+- **Router:** `go-chi/chi/v5` with the `RequestID`, `RequestLogger` (slog JSON), `Recoverer` and `Timeout` middlewares
+- **Logging:** `log/slog` JSON to stdout
+- **Config:** environment variables (`caarlos0/env/v10`)
+- **LLM providers:** Anthropic Claude (official Go SDK), OpenAI, Ollama (any OpenAI-compatible server) and an offline mock
+- **Graceful shutdown:** on SIGINT/SIGTERM the service drains HTTP requests first, then finishes background reviews
+
+## Project layout
+
+```
+cmd/server/main.go          wiring, HTTP server, signal handling, graceful shutdown
+cmd/action/main.go          GitHub Action entry point: one PR review per workflow run
+action.yml                  GitHub Action definition (built from Dockerfile.action)
+internal/config/            env-based configuration + validation
+internal/domain/            models, sentinel errors, interfaces (LLMProvider, SourceControlProvider, ReviewService)
+internal/service/           review orchestration, prompt, JSON parsing, PR comment formatting, background dispatcher
+internal/provider/          LLMProvider implementations: anthropic.go, openai.go (OpenAI/Ollama), mock.go, factory.go
+internal/scm/               SourceControlProvider implementation for GitHub (diff fetch + PR comments), pull_request event parsing
+internal/handler/           chi router, handlers, DTOs, middleware
+```
 
 ## Core interfaces (`internal/domain/interfaces.go`)
 
